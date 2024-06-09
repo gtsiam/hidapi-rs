@@ -75,18 +75,16 @@ pub use error::HidError;
 
 cfg_if! {
     if #[cfg(all(feature = "linux-native", target_os = "linux"))] {
-        //#[cfg_attr(docsrs, doc(cfg(all(feature = "linux-native", target_os = "linux"))))]
         mod linux_native;
         use linux_native::HidApiBackend;
     } else if #[cfg(all(feature = "windows-native", target_os = "windows"))] {
-        //#[cfg_attr(docsrs, doc(cfg(all(feature = "windows-native", target_os = "windows"))))]
         mod windows_native;
         use windows_native::HidApiBackend;
     } else if #[cfg(hidapi)] {
         mod hidapi;
         use hidapi::HidApiBackend;
     } else {
-        compile_error!("No backend selected");
+        compile_error!("No hidapi backend selected");
     }
 }
 
