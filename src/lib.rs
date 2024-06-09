@@ -125,21 +125,53 @@ cfg_if! {
 pub type HidResult<T> = Result<T, HidError>;
 pub const MAX_REPORT_DESCRIPTOR_SIZE: usize = 4096;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InitState {
-    NotInit,
-    Init { enumerate: bool },
+    Uninit { device_discovery: bool },
+    Init,
 }
 
-static INIT_STATE: Mutex<InitState> = Mutex::new(InitState::NotInit);
+static INIT_STATE: Mutex<InitState> = Mutex::new(InitState::Uninit {
+    device_discovery: true,
+});
 
-fn lazy_init(do_enumerate: bool) -> HidResult<()> {
-    let mut init_state = INIT_STATE.lock().unwrap();
+/// `hidapi` context.
+///
+/// The `hidapi` C library is lazily initialized when creating the first instance,
+/// and never deinitialized. Therefore, it is allowed to create multiple `HidApi`
+/// instances.
+///
+/// Each instance has its own device list cache.
+pub struct HidApi {
+    device_list: Vec<DeviceInfo>,
+}
 
-    match *init_state {
-        InitState::NotInit => {
+impl HidApi {
+    /// Disable device discovery.
+    ///
+    /// This is needed on Android, where access to USB device enumeration is limited.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an hidapi context has already been initialized.
+    pub fn disable_device_discovery() {
+        if let InitState::Uninit { device_discovery } = &mut *INIT_STATE.lock().unwrap() {
+            *device_discovery = false;
+            return;
+        }
+
+        panic!("Cannot disable device discovery after HidApi has been initialized")
+    }
+
+    /// Create a new hidapi context.
+    ///
+    /// Will also initialize the currently available device list.
+    pub fn new() -> HidResult<Self> {
+        let mut init_state = INIT_STATE.lock().expect("HidApi context initialization");
+
+        #[allow(unused_variables)]
+        if let InitState::Uninit { device_discovery } = *init_state {
             #[cfg(all(libusb, not(target_os = "freebsd")))]
-            if !do_enumerate {
+            if !device_discovery {
                 // Do not scan for devices in libusb_init()
                 // Must be set before calling it.
                 // This is needed on Android, where access to USB devices is limited
@@ -157,64 +189,14 @@ fn lazy_init(do_enumerate: bool) -> HidResult<()> {
                 ffi::macos::hid_darwin_set_open_exclusive(0)
             }
 
-            *init_state = InitState::Init {
-                enumerate: do_enumerate,
-            }
+            *init_state = InitState::Init;
         }
-        InitState::Init { enumerate } => {
-            if enumerate != do_enumerate {
-                panic!("Trying to initialize hidapi with enumeration={}, but it is already initialized with enumeration={}.", do_enumerate, enumerate)
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// `hidapi` context.
-///
-/// The `hidapi` C library is lazily initialized when creating the first instance,
-/// and never deinitialized. Therefore, it is allowed to create multiple `HidApi`
-/// instances.
-///
-/// Each instance has its own device list cache.
-pub struct HidApi {
-    device_list: Vec<DeviceInfo>,
-}
-
-impl HidApi {
-    /// Create a new hidapi context.
-    ///
-    /// Will also initialize the currently available device list.
-    ///
-    /// # Panics
-    ///
-    /// Panics if hidapi is already initialized in "without enumerate" mode
-    /// (i.e. if `new_without_enumerate()` has been called before).
-    pub fn new() -> HidResult<Self> {
-        lazy_init(true)?;
 
         let mut api = HidApi {
             device_list: Vec::with_capacity(8),
         };
         api.add_devices(0, 0)?;
         Ok(api)
-    }
-
-    /// Create a new hidapi context, in "do not enumerate" mode.
-    ///
-    /// This is needed on Android, where access to USB device enumeration is limited.
-    ///
-    /// # Panics
-    ///
-    /// Panics if hidapi is already initialized in "do enumerate" mode
-    /// (i.e. if `new()` has been called before).
-    pub fn new_without_enumerate() -> HidResult<Self> {
-        lazy_init(false)?;
-
-        Ok(HidApi {
-            device_list: Vec::new(),
-        })
     }
 
     /// Refresh devices list and information about them (to access them use
