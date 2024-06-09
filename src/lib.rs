@@ -166,7 +166,7 @@ impl HidApi {
     pub fn new() -> HidResult<Self> {
         let mut init_state = INIT_STATE.lock().expect("HidApi context initialization");
 
-        #[allow(unused_variables)]
+        let mut list_devices = true;
         if let InitState::Uninit { device_discovery } = *init_state {
             #[cfg(all(libusb, not(target_os = "freebsd")))]
             if !device_discovery {
@@ -175,6 +175,8 @@ impl HidApi {
                 // This is needed on Android, where access to USB devices is limited
                 unsafe { ffi::libusb_set_option(std::ptr::null_mut(), 2) }
             }
+
+            list_devices = device_discovery;
 
             // Initialize the HID
             #[cfg(hidapi)]
@@ -190,11 +192,17 @@ impl HidApi {
             *init_state = InitState::Init;
         }
 
-        let mut api = HidApi {
-            device_list: Vec::with_capacity(8),
-        };
-        api.add_devices(0, 0)?;
-        Ok(api)
+        if list_devices {
+            let mut api = Self {
+                device_list: Vec::with_capacity(8),
+            };
+            api.add_devices(0, 0)?;
+            Ok(api)
+        } else {
+            Ok(Self {
+                device_list: Vec::new(),
+            })
+        }
     }
 
     /// Refresh devices list and information about them (to access them use
